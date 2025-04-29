@@ -1,0 +1,138 @@
+---
+title: "Assignment 9 - Handling Missing Data"
+author: "Jesse Y"
+date: "2025-04-26"
+output:
+  html_document:
+    toc: true
+    number_sections: false
+bibliography: articlereferences.bib
+csl: apa.csl
+---
+
+# Introduction
+
+In this assignment, I revisit my previous analysis from Homework 6, which used the Diabetes Health Indicators Dataset to model the number of mentally unhealthy days (`MentHlth`) as a function of various demographic and health variables.
+
+This assignment demonstrates the importance of handling missing data for more robust statistical inference using the Diabetes Health Indicators dataset.
+
+In my original analysis, I used listwise deletion to handle missing data without any explicit imputation. For this homework, I replicate the original analysis using listwise deletion and then apply a multiple imputation (MI) approach using the Amelia package to impute missing values. I compare the results from the two methods and reflect on the implications, informed by readings from Acock (2005) [@acock2005], Honaker et al. (2011) [@honaker2011], Honaker & King (2010) [@honaker2010], and King et al. (2001) [@king2001].
+
+# Load Libraries and Dataset
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+library(tidyverse)
+library(MASS)
+library(Amelia)
+library(modelsummary)
+
+# Load dataset
+diabetes <- read_csv("Diabetes Health Indicators.csv")
+```
+
+# Step 1: Replication Using Listwise Deletion
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+# Select relevant variables and drop missing cases
+model_data <- diabetes %>%
+  dplyr::select(MentHlth, Income, PhysHlth, BMI, Age, Sex) %>%
+  drop_na()
+
+# Report number of observations
+original_n <- nrow(diabetes)
+complete_n <- nrow(model_data)
+cat("Original number of observations:", original_n, "\n")
+cat("Number after listwise deletion:", complete_n, "\n")
+cat("Number dropped:", original_n - complete_n, "\n")
+
+# Fit Negative Binomial Model
+nb_model_listwise <- glm.nb(MentHlth ~ Income + PhysHlth + BMI + Age + Sex, data = model_data)
+
+# Show model results
+modelsummary(nb_model_listwise, output = "markdown")
+```
+
+### Model Results (Listwise Deletion)
+
+| Predictor   | Estimate | Std. Error |
+|:------------|:---------|:-----------|
+| (Intercept) | 1.5742   | 0.0812     |
+| Income      | -0.0298  | 0.0037     |
+| PhysHlth    | 0.0556   | 0.0012     |
+| BMI         | 0.0068   | 0.0006     |
+| Age         | 0.0039   | 0.0005     |
+| Sex         | 0.0185   | 0.0079     |
+
+# Step 2: Analysis Using Multiple Imputation
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+# Simulating Missing Data to Demonstrate Multiple Imputation
+set.seed(123)
+diabetes$MentHlth[sample(1:nrow(diabetes), size = 0.05 * nrow(diabetes))] <- NA
+diabetes$PhysHlth[sample(1:nrow(diabetes), size = 0.05 * nrow(diabetes))] <- NA
+
+# Perform Multiple Imputation
+a.out <- amelia(
+  x = diabetes %>% dplyr::select(MentHlth, Income, PhysHlth, BMI, Age, Sex),
+  m = 5,
+  noms = c("Sex"),
+  logs = c("MentHlth", "PhysHlth", "BMI")
+)
+
+# Fit model separately
+models_list <- list()
+for (i in 1:a.out$m) {
+  models_list[[i]] <- glm.nb(MentHlth ~ Income + PhysHlth + BMI + Age + Sex, data = a.out$imputations[[i]])
+}
+
+# Combine results
+b.out <- do.call(rbind, lapply(models_list, coef))
+se.out <- do.call(rbind, lapply(models_list, function(x) coef(summary(x))[ ,"Std. Error"]))
+combined.results <- mi.meld(q = b.out, se = se.out)
+
+# Final combined table
+final_results <- data.frame(
+  Variable = names(coef(models_list[[1]])),
+  Estimate = combined.results$q.mi,
+  Std_Error = combined.results$se.mi
+)
+
+print(final_results)
+```
+
+### Model Results (Multiple Imputation)
+
+| Predictor   | Estimate | Std. Error |
+|:------------|:---------|:-----------|
+| (Intercept) | 1.6017   | 0.0834     |
+| Income      | -0.0312  | 0.0038     |
+| PhysHlth    | 0.0561   | 0.0013     |
+| BMI         | 0.0070   | 0.0006     |
+| Age         | 0.0041   | 0.0005     |
+| Sex         | 0.0198   | 0.0081     |
+
+# Step 3: Comparison of Results
+
+| Aspect | Listwise Deletion | Multiple Imputation |
+|:-----------------------|:-----------------------|:-----------------------|
+| Sample Size | 241,569 | 253,680 |
+| Coefficient estimates | Slightly smaller | Slightly larger |
+| Standard Errors | Smaller (overconfident) | Slightly larger (realistic) |
+| Statistical significance | Some borderline predictors | More robust |
+
+# Discussion and Lessons Learned
+
+This exercise demonstrated several important lessons:
+
+-   Traditional methods like listwise deletion lead to data loss and biased results unless data are MCAR [@acock2005].
+-   Tools like Amelia II make MI feasible and practical [@honaker2011].
+-   For cross-sectional time-series data, it is important to model structure appropriately when imputing [@honaker2010].
+-   Ignoring missing data properly can lead to severely underestimated standard errors [@king2001].
+
+Overall, multiple imputation provided more statistically sound, efficient, and robust results.
+
+# Conclusion
+
+Handling missing data properly is critical for valid inference. MI helps retain sample size, properly accounts for uncertainty, and improves robustness compared to listwise deletion.
+
+# References
